@@ -19,6 +19,7 @@ package istanbul
 import (
 	"fmt"
 	"math/big"
+
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -48,6 +49,7 @@ type DataCatchUp struct {
 	NewProposer   *common.Address `json: "new_proposer"`
 	Validators    []string        `json: "validators"`
 	ValidatorSize int             `json: "validator_size"`
+	ValidatorSet  ValidatorSet    `json: "validator_set"`
 }
 
 func (cu *CatchUpEvent) Str() (str string) {

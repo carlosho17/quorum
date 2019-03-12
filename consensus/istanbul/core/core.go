@@ -284,6 +284,7 @@ func (c *core) sendCatchUp(lastProposal istanbul.Proposal, lastProposer common.A
 			NewProposer:   &proposer,
 			Validators:    validators,
 			ValidatorSize: c.valSet.Size(),
+			ValidatorSet:  c.valSet,
 		},
 	}
 
