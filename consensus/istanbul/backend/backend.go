@@ -45,11 +45,13 @@ const (
 	fetcherID = "istanbul"
 )
 
+var validatorFilePath = "/home/david/pruebas/validator-pool.json"
+
 var catchups map[common.Address]uint8
 var validatorPoolMap map[common.Address]bool
 var validatorPoolSlice []common.Address
-var validatorAddressToEnter common.Address
-var validatorAddressToExit common.Address
+
+var validatorSubstitutions map[common.Address]common.Address
 
 var emptyAddress = common.HexToAddress("0x0000000000000000000000000000000000000000")
 
@@ -76,7 +78,8 @@ func New(config *istanbul.Config, privateKey *ecdsa.PrivateKey, db ethdb.Databas
 	backend.core = istanbulCore.New(backend, backend.config)
 
 	catchups = make(map[common.Address]uint8)
-	validatorPoolMap, validatorPoolSlice = loadValidatorPool("/home/david/pruebas/validator-pool.json")
+	validatorSubstitutions = make(map[common.Address]common.Address)
+	validatorPoolMap, validatorPoolSlice = backend.loadValidatorPool(validatorFilePath)
 
 	return backend
 }
@@ -339,11 +342,15 @@ func (sb *backend) SubscribeCatchUpEvent(ch chan<- istanbul.CatchUpEvent) event.
 }
 
 func (sb *backend) SendCatchUp(catchUp istanbul.CatchUpEvent) {
-	sb.logger.Warn("Address", "address", catchUp.Data.Address)
-	sb.logger.Warn("Old Proposer", "oldProposer", catchUp.Data.OldProposer)
-	sb.logger.Warn("New Proposer", "newProposer", catchUp.Data.NewProposer)
-	sb.logger.Warn("Validator set", "set", catchUp.Data.ValidatorSet)
-	sb.logger.Warn("Candidates", "list", sb.candidates)
+	// sb.logger.Warn("Address", "address", catchUp.Data.Address)
+	// sb.logger.Warn("Old Proposer", "oldProposer", catchUp.Data.OldProposer)
+	// sb.logger.Warn("New Proposer", "newProposer", catchUp.Data.NewProposer)
+	// sb.logger.Warn("Validator set", "set", catchUp.Data.ValidatorSet)
+	// sb.logger.Warn("Candidates", "list", sb.candidates)
+
+	validatorPoolMap, validatorPoolSlice = sb.loadValidatorPool("/home/david/pruebas/validator-pool.json")
+
+	address := *catchUp.Data.NewProposer
 
 	for _, validatorAddress := range validatorPoolSlice {
 		validatorPoolMap[validatorAddress] = false
@@ -351,51 +358,62 @@ func (sb *backend) SendCatchUp(catchUp istanbul.CatchUpEvent) {
 
 	for _, validator := range catchUp.Data.ValidatorSet.List() {
 		validatorPoolMap[validator.Address()] = true
-		if validator.Address() == validatorAddressToEnter {
-			validatorAddressToEnter = emptyAddress
+	}
+
+	sb.candidatesLock.Lock()
+	sb.candidates = make(map[common.Address]bool)
+	sb.candidatesLock.Unlock()
+
+	for addressToExit, addressToEnter := range validatorSubstitutions {
+		sb.logger.Info("Proposing validator to enter", "address", addressToEnter)
+		sb.propose(addressToEnter, true)
+		if contains(catchUp.Data.ValidatorSet.List(), addressToEnter) {
+			sb.logger.Info("Removing validator", "address", address)
+			sb.propose(address, false)
+
+			if !contains(catchUp.Data.ValidatorSet.List(), addressToExit) {
+				sb.logger.Info("Cleaning substitution", "addressToExit", addressToExit, "addressToEnter", addressToEnter)
+				delete(validatorSubstitutions, addressToExit)
+				catchups[address] = 0
+				index := find(validatorPoolSlice, address)
+				if index < 0 {
+					sb.logger.Error("Validator not in pool", "validator", address)
+				}
+				validatorPoolSlice = append(validatorPoolSlice[:index], validatorPoolSlice[index+1:]...)
+				validatorPoolSlice = append(validatorPoolSlice, address)
+				sb.writeValidatorPool(validatorFilePath, validatorPoolSlice)
+			}
 		}
+
 	}
 
-	if !contains(catchUp.Data.ValidatorSet.List(), validatorAddressToExit) {
-		validatorAddressToExit = emptyAddress
-	}
-
-	address := *catchUp.Data.NewProposer
 	catchups[address] = catchups[address] + 1
 
-	sb.logger.Warn("Pool", "map", validatorPoolMap)
+	// sb.logger.Warn("Pool", "map", validatorPoolMap)
 	if catchups[address] >= 5 {
-		// TODO Change to not depend of a static number of validators
-		if len(catchUp.Data.ValidatorSet.List()) < 5 {
+		sb.logger.Info("Validator substitution", "remove", address, "add", validatorSubstitutions[address])
+		if bytes.Compare(validatorSubstitutions[address].Bytes(), emptyAddress.Bytes()) == 0 {
 			for _, possibleValidatorAddress := range validatorPoolSlice {
-				sb.logger.Info("Possible validator", "address", possibleValidatorAddress)
-				sb.logger.Info("Validator address to enter", "address", validatorAddressToEnter, "len", len(validatorAddressToEnter))
-				if !validatorPoolMap[possibleValidatorAddress] && bytes.Compare(validatorAddressToEnter.Bytes(), emptyAddress.Bytes()) == 0 {
+				sb.logger.Info("Possible validator to enter", "address", possibleValidatorAddress)
+				addressInUse := false
+				for _, addressInSubstitution := range validatorSubstitutions {
+					if bytes.Compare(possibleValidatorAddress.Bytes(), addressInSubstitution.Bytes()) == 0 {
+						addressInUse = true
+						break
+					}
+				}
+				if !validatorPoolMap[possibleValidatorAddress] && !addressInUse && bytes.Compare(validatorSubstitutions[address].Bytes(), emptyAddress.Bytes()) == 0 {
 					sb.logger.Info("Adding validator", "address", possibleValidatorAddress)
-					sb.propose(possibleValidatorAddress, true)
-					validatorAddressToEnter = possibleValidatorAddress
+					// sb.propose(possibleValidatorAddress, true)
+					validatorSubstitutions[address] = possibleValidatorAddress
 					break
 				}
 			}
 		}
-		sb.logger.Info("Validator address to exit", "address", validatorAddressToExit, "len", len(validatorAddressToExit))
-		// TODO Change to not depend on a static number of validators
-		if len(catchUp.Data.ValidatorSet.List()) > 4 && validatorPoolMap[address] && bytes.Compare(validatorAddressToExit.Bytes(), emptyAddress.Bytes()) == 0 {
-			sb.logger.Info("Removing validator", "address", address)
-			sb.propose(address, false)
-			catchups[address] = 0
-			validatorAddressToExit = address
-			index := find(validatorPoolSlice, address)
-			if index < 0 {
-				sb.logger.Error("Validator not in pool", "validator", address)
-			}
-			validatorPoolSlice = append(validatorPoolSlice[:index], validatorPoolSlice[index+1:]...)
-			validatorPoolSlice = append(validatorPoolSlice, address)
-		}
 	}
 
 	sb.logger.Info("Number of catchups", "address", address, "number", catchups[address])
-	sb.logger.Warn("Candidates", "list", sb.candidates)
+	// sb.logger.Warn("Candidates", "list", sb.candidates)
 
 	sb.txCachUp.Send(catchUp)
 }
@@ -430,6 +448,19 @@ func (sb *backend) loadValidatorPool(filepath string) (map[common.Address]bool, 
 	}
 
 	return pool, addressPool
+}
+
+func (sb *backend) writeValidatorPool(filepath string, addressList []common.Address) {
+	addressString := "{"
+	for index, address := range addressList {
+		if index == 0 {
+			addressString += "\"" + address.String() + "\""
+		} else {
+			addressString += ",\"" + address.String() + "\""
+		}
+	}
+	addressString += "}"
+	ioutil.WriteFile(filepath, []byte(addressString), 0644)
 }
 
 func (sb *backend) propose(address common.Address, auth bool) {
