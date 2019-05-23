@@ -72,10 +72,11 @@ type core struct {
 	events                *event.TypeMuxSubscription
 	finalCommittedSub     *event.TypeMuxSubscription
 	timeoutSub            *event.TypeMuxSubscription
-	catchUp	              *event.TypeMuxSubscription
+	catchUp               *event.TypeMuxSubscription
 	futurePreprepareTimer *time.Timer
 
 	valSet                istanbul.ValidatorSet
+	pool                  istanbul.Pool
 	waitingForRoundChange bool
 	validateFn            func([]byte, []byte) (common.Address, error)
 
@@ -235,6 +236,7 @@ func (c *core) startNewRound(round *big.Int) {
 			Round:    new(big.Int),
 		}
 		c.valSet = c.backend.Validators(lastProposal)
+		c.pool = c.backend.Pool(lastProposal)
 	}
 
 	// Update logger
@@ -261,7 +263,7 @@ func (c *core) startNewRound(round *big.Int) {
 	}
 	c.newRoundChangeTimer()
 
-	logger.Info("New round", "new_round", newView.Round, "new_seq", newView.Sequence, "new_proposer", c.valSet.GetProposer(), "valSet", c.valSet.List(), "size", c.valSet.Size(), "isProposer", c.isProposer())
+	logger.Info("New round", "new_round", newView.Round, "new_seq", newView.Sequence, "new_proposer", c.valSet.GetProposer(), "valSet", c.valSet.List(), "size", c.valSet.Size(), "isProposer", c.isProposer(), "pool", c.pool.List(), "size", c.pool.Size())
 }
 
 func (c *core) sendCatchUp(lastProposal istanbul.Proposal, lastProposer common.Address) {
@@ -285,10 +287,11 @@ func (c *core) sendCatchUp(lastProposal istanbul.Proposal, lastProposer common.A
 			Validators:    validators,
 			ValidatorSize: c.valSet.Size(),
 			ValidatorSet:  c.valSet,
+			Pool:          c.pool,
 		},
 	}
 
-	c.backend.SendCatchUp(msg);
+	c.backend.SendCatchUp(msg)
 }
 
 func (c *core) catchUpRound(view *istanbul.View) {
@@ -297,9 +300,9 @@ func (c *core) catchUpRound(view *istanbul.View) {
 	if view.Round.Cmp(c.current.Round()) > 0 {
 		c.roundMeter.Mark(new(big.Int).Sub(view.Round, c.current.Round()).Int64())
 
-			lastProposal, lastProposer := c.backend.LastProposal()
-			c.sendCatchUp(lastProposal, lastProposer)
-			logger.Warn("Catch up latest proposal", "number", lastProposal.Number().Uint64(), "hash", lastProposal.Hash())
+		lastProposal, lastProposer := c.backend.LastProposal()
+		c.sendCatchUp(lastProposal, lastProposer)
+		logger.Warn("Catch up latest proposal", "number", lastProposal.Number().Uint64(), "hash", lastProposal.Hash())
 
 	}
 	c.waitingForRoundChange = true

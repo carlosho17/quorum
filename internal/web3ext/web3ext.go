@@ -697,6 +697,12 @@ web3._extend({
 			inputFormatter: [null]
 		}),
 		new web3._extend.Method({
+			name: 'getPool',
+			call: 'istanbul_getPool',
+			params: 1,
+			inputFormatter: [null]
+		}),
+		new web3._extend.Method({
 			name: 'getValidatorsAtHash',
 			call: 'istanbul_getValidatorsAtHash',
 			params: 1
@@ -707,8 +713,18 @@ web3._extend({
 			params: 2
 		}),
 		new web3._extend.Method({
+			name: 'proposePool',
+			call: 'istanbul_proposePool',
+			params: 2
+		}),
+		new web3._extend.Method({
 			name: 'discard',
 			call: 'istanbul_discard',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'discardPool',
+			call: 'istanbul_discardPool',
 			params: 1
 		})
 	],
@@ -717,6 +733,10 @@ web3._extend({
 		new web3._extend.Property({
 			name: 'candidates',
 			getter: 'istanbul_candidates'
+		}),
+		new web3._extend.Property({
+			name: 'candidatesPool',
+			getter: 'istanbul_candidatesPool'
 		}),
 	]
 });

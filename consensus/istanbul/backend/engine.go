@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/istanbul"
 	istanbulCore "github.com/ethereum/go-ethereum/consensus/istanbul/core"
+	"github.com/ethereum/go-ethereum/consensus/istanbul/pool"
 	"github.com/ethereum/go-ethereum/consensus/istanbul/validator"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -92,6 +93,9 @@ var (
 	nonceAuthVote = hexutil.MustDecode("0xffffffffffffffff") // Magic nonce number to vote on adding a new validator
 	nonceDropVote = hexutil.MustDecode("0x0000000000000000") // Magic nonce number to vote on removing a validator.
 
+	nonceAuthVotePool = hexutil.MustDecode("0xffffffff00000000") // Magic nonce number to vote on adding a new validator
+	nonceDropVotePool = hexutil.MustDecode("0x00000000ffffffff") // Magic nonce number to vote on removing a validator.
+
 	inmemoryAddresses  = 20 // Number of recent addresses from ecrecover
 	recentAddresses, _ = lru.NewARC(inmemoryAddresses)
 )
@@ -130,7 +134,7 @@ func (sb *backend) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	}
 
 	// Ensure that the coinbase is valid
-	if header.Nonce != (emptyNonce) && !bytes.Equal(header.Nonce[:], nonceAuthVote) && !bytes.Equal(header.Nonce[:], nonceDropVote) {
+	if header.Nonce != (emptyNonce) && !bytes.Equal(header.Nonce[:], nonceAuthVote) && !bytes.Equal(header.Nonce[:], nonceDropVote) && !bytes.Equal(header.Nonce[:], nonceDropVotePool) && !bytes.Equal(header.Nonce[:], nonceAuthVotePool) {
 		return errInvalidNonce
 	}
 	// Ensure that the mix digest is zero as we don't have fork protection currently
@@ -348,8 +352,42 @@ func (sb *backend) Prepare(chain consensus.ChainReader, header *types.Header) er
 	}
 	sb.candidatesLock.RUnlock()
 
-	// pick one of the candidates randomly
-	if len(addresses) > 0 {
+	// get valid pool candidate list
+	sb.candidatesPoolLock.RLock()
+	var addressesPool []common.Address
+	var authorizesPool []bool
+	for address, authorize := range sb.candidatesPool {
+		if snap.checkVotePool(address, authorize) {
+			addressesPool = append(addressesPool, address)
+			authorizesPool = append(authorizesPool, authorize)
+		}
+	}
+	sb.candidatesPoolLock.RUnlock()
+
+	if len(addresses) > 0 && len(addressesPool) > 0 {
+		i := rand.Intn(2)
+		if i == 0 {
+			// pick one of the candidates randomly
+			index := rand.Intn(len(addresses))
+			// add validator voting in coinbase
+			header.Coinbase = addresses[index]
+			if authorizes[index] {
+				copy(header.Nonce[:], nonceAuthVote)
+			} else {
+				copy(header.Nonce[:], nonceDropVote)
+			}
+		} else {
+			index := rand.Intn(len(addressesPool))
+			// add validator voting in coinbase
+			header.Coinbase = addressesPool[index]
+			if authorizesPool[index] {
+				copy(header.Nonce[:], nonceAuthVotePool)
+			} else {
+				copy(header.Nonce[:], nonceDropVotePool)
+			}
+		}
+	} else if len(addresses) > 0 {
+		// pick one of the candidates randomly
 		index := rand.Intn(len(addresses))
 		// add validator voting in coinbase
 		header.Coinbase = addresses[index]
@@ -358,10 +396,19 @@ func (sb *backend) Prepare(chain consensus.ChainReader, header *types.Header) er
 		} else {
 			copy(header.Nonce[:], nonceDropVote)
 		}
+	} else if len(addressesPool) > 0 {
+		index := rand.Intn(len(addressesPool))
+		// add validator voting in coinbase
+		header.Coinbase = addressesPool[index]
+		if authorizesPool[index] {
+			copy(header.Nonce[:], nonceAuthVotePool)
+		} else {
+			copy(header.Nonce[:], nonceDropVotePool)
+		}
 	}
 
 	// add validators in snapshot to extraData's validators section
-	extra, err := prepareExtra(header, snap.validators())
+	extra, err := prepareExtra(header, snap.validators(), snap.pool())
 	if err != nil {
 		return err
 	}
@@ -550,7 +597,7 @@ func (sb *backend) snapshot(chain consensus.ChainReader, number uint64, hash com
 			if err != nil {
 				return nil, err
 			}
-			snap = newSnapshot(sb.config.Epoch, 0, genesis.Hash(), validator.NewSet(istanbulExtra.Validators, sb.config.ProposerPolicy))
+			snap = newSnapshot(sb.config.Epoch, 0, genesis.Hash(), validator.NewSet(istanbulExtra.Validators, sb.config.ProposerPolicy), pool.NewSet(istanbulExtra.Pool))
 			if err := snap.store(sb.db); err != nil {
 				return nil, err
 			}
@@ -635,7 +682,7 @@ func ecrecover(header *types.Header) (common.Address, error) {
 }
 
 // prepareExtra returns a extra-data of the given header and validators
-func prepareExtra(header *types.Header, vals []common.Address) ([]byte, error) {
+func prepareExtra(header *types.Header, vals []common.Address, pool []common.Address) ([]byte, error) {
 	var buf bytes.Buffer
 
 	// compensate the lack bytes if header.Extra is not enough IstanbulExtraVanity bytes.
@@ -646,6 +693,7 @@ func prepareExtra(header *types.Header, vals []common.Address) ([]byte, error) {
 
 	ist := &types.IstanbulExtra{
 		Validators:    vals,
+		Pool:          pool,
 		Seal:          []byte{},
 		CommittedSeal: [][]byte{},
 	}

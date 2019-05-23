@@ -17,12 +17,8 @@
 package backend
 
 import (
-	"bytes"
 	"crypto/ecdsa"
-	"encoding/json"
-	"io/ioutil"
 	"math/big"
-	"os"
 	"sync"
 	"time"
 
@@ -30,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/istanbul"
 	istanbulCore "github.com/ethereum/go-ethereum/consensus/istanbul/core"
+	"github.com/ethereum/go-ethereum/consensus/istanbul/pool"
 	"github.com/ethereum/go-ethereum/consensus/istanbul/validator"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -45,15 +42,10 @@ const (
 	fetcherID = "istanbul"
 )
 
-var validatorFilePath = "/home/david/pruebas/validator-pool.json"
+var emptyAddress = common.HexToAddress("0x0000000000000000000000000000000000000000")
 
 var catchups map[common.Address]uint8
-var validatorPoolMap map[common.Address]bool
-var validatorPoolSlice []common.Address
-
 var validatorSubstitutions map[common.Address]common.Address
-
-var emptyAddress = common.HexToAddress("0x0000000000000000000000000000000000000000")
 
 // New creates an Ethereum backend for Istanbul core engine.
 func New(config *istanbul.Config, privateKey *ecdsa.PrivateKey, db ethdb.Database) consensus.Istanbul {
@@ -71,6 +63,7 @@ func New(config *istanbul.Config, privateKey *ecdsa.PrivateKey, db ethdb.Databas
 		commitCh:         make(chan *types.Block, 1),
 		recents:          recents,
 		candidates:       make(map[common.Address]bool),
+		candidatesPool:   make(map[common.Address]bool),
 		coreStarted:      false,
 		recentMessages:   recentMessages,
 		knownMessages:    knownMessages,
@@ -79,7 +72,6 @@ func New(config *istanbul.Config, privateKey *ecdsa.PrivateKey, db ethdb.Databas
 
 	catchups = make(map[common.Address]uint8)
 	validatorSubstitutions = make(map[common.Address]common.Address)
-	validatorPoolMap, validatorPoolSlice = backend.loadValidatorPool(validatorFilePath)
 
 	return backend
 }
@@ -109,6 +101,11 @@ type backend struct {
 	candidates map[common.Address]bool
 	// Protects the signer fields
 	candidatesLock sync.RWMutex
+	// Current list of candidates for pool
+	candidatesPool map[common.Address]bool
+	// Protects the signer fields
+	candidatesPoolLock sync.RWMutex
+
 	// Snapshots for recent block to speed up reorgs
 	recents *lru.ARCCache
 
@@ -134,6 +131,11 @@ func (sb *backend) Address() common.Address {
 // Validators implements istanbul.Backend.Validators
 func (sb *backend) Validators(proposal istanbul.Proposal) istanbul.ValidatorSet {
 	return sb.getValidators(proposal.Number().Uint64(), proposal.Hash())
+}
+
+// Validators implements istanbul.Backend.Validators
+func (sb *backend) Pool(proposal istanbul.Proposal) istanbul.Pool {
+	return sb.getPool(proposal.Number().Uint64(), proposal.Hash())
 }
 
 // Broadcast implements istanbul.Backend.Broadcast
@@ -313,6 +315,14 @@ func (sb *backend) getValidators(number uint64, hash common.Hash) istanbul.Valid
 	return snap.ValSet
 }
 
+func (sb *backend) getPool(number uint64, hash common.Hash) istanbul.Pool {
+	snap, err := sb.snapshot(sb.chain, number, hash, nil)
+	if err != nil {
+		return pool.NewSet(nil)
+	}
+	return snap.Pool
+}
+
 func (sb *backend) LastProposal() (istanbul.Proposal, common.Address) {
 	block := sb.currentBlock()
 
@@ -346,65 +356,47 @@ func (sb *backend) SendCatchUp(catchUp istanbul.CatchUpEvent) {
 	// sb.logger.Warn("Old Proposer", "oldProposer", catchUp.Data.OldProposer)
 	// sb.logger.Warn("New Proposer", "newProposer", catchUp.Data.NewProposer)
 	// sb.logger.Warn("Validator set", "set", catchUp.Data.ValidatorSet)
-	// sb.logger.Warn("Candidates", "list", sb.candidates)
-
-	validatorPoolMap, validatorPoolSlice = sb.loadValidatorPool("/home/david/pruebas/validator-pool.json")
 
 	address := *catchUp.Data.NewProposer
 
-	for _, validatorAddress := range validatorPoolSlice {
-		validatorPoolMap[validatorAddress] = false
-	}
-
-	for _, validator := range catchUp.Data.ValidatorSet.List() {
-		validatorPoolMap[validator.Address()] = true
+	var validatorPoolSlice []common.Address
+	for _, validator := range catchUp.Data.Pool.List() {
+		validatorPoolSlice = append(validatorPoolSlice, validator.Address())
 	}
 
 	sb.candidatesLock.Lock()
 	sb.candidates = make(map[common.Address]bool)
 	sb.candidatesLock.Unlock()
 
+	// sb.logger.Info("Substitutions", "map", validatorSubstitutions)
 	for addressToExit, addressToEnter := range validatorSubstitutions {
-		sb.logger.Info("Proposing validator to enter", "address", addressToEnter)
-		sb.propose(addressToEnter, true)
-		if contains(catchUp.Data.ValidatorSet.List(), addressToEnter) {
-			sb.logger.Info("Removing validator", "address", address)
-			sb.propose(address, false)
+		sb.logger.Info("Validator substitution", "enter", addressToEnter, "exit", addressToExit)
+		if !catchUp.Data.ValidatorSet.Contains(addressToEnter) {
+			sb.logger.Info("Proposing validator to enter", "address", addressToEnter)
+			sb.propose(addressToEnter, true)
+		} else {
+			sb.logger.Info("Proposing validator to exit", "address", addressToExit)
+			sb.propose(addressToExit, false)
 
-			if !contains(catchUp.Data.ValidatorSet.List(), addressToExit) {
-				sb.logger.Info("Cleaning substitution", "addressToExit", addressToExit, "addressToEnter", addressToEnter)
-				delete(validatorSubstitutions, addressToExit)
-				catchups[address] = 0
-				index := find(validatorPoolSlice, address)
-				if index < 0 {
-					sb.logger.Error("Validator not in pool", "validator", address)
-				}
-				validatorPoolSlice = append(validatorPoolSlice[:index], validatorPoolSlice[index+1:]...)
-				validatorPoolSlice = append(validatorPoolSlice, address)
-				sb.writeValidatorPool(validatorFilePath, validatorPoolSlice)
-			}
+			// if !catchUp.Data.ValidatorSet.Contains(addressToExit) {
+			// 	index := find(validatorPoolSlice, address)
+			// 	if index < 0 {
+			// 		sb.logger.Error("Validator not in pool", "validator", address)
+			// 	}
+			// 	// validatorPoolSlice = append(validatorPoolSlice[:index], validatorPoolSlice[index+1:]...)
+			// 	// validatorPoolSlice = append(validatorPoolSlice, address)
+			// }
 		}
-
 	}
 
 	catchups[address] = catchups[address] + 1
-
-	// sb.logger.Warn("Pool", "map", validatorPoolMap)
 	if catchups[address] >= 5 {
-		sb.logger.Info("Validator substitution", "remove", address, "add", validatorSubstitutions[address])
-		if bytes.Compare(validatorSubstitutions[address].Bytes(), emptyAddress.Bytes()) == 0 {
+		// sb.logger.Info("Validator substitution", "remove", address, "add", validatorSubstitutions[address])
+		if validatorSubstitutions[address] == emptyAddress {
 			for _, possibleValidatorAddress := range validatorPoolSlice {
-				sb.logger.Info("Possible validator to enter", "address", possibleValidatorAddress)
-				addressInUse := false
-				for _, addressInSubstitution := range validatorSubstitutions {
-					if bytes.Compare(possibleValidatorAddress.Bytes(), addressInSubstitution.Bytes()) == 0 {
-						addressInUse = true
-						break
-					}
-				}
-				if !validatorPoolMap[possibleValidatorAddress] && !addressInUse && bytes.Compare(validatorSubstitutions[address].Bytes(), emptyAddress.Bytes()) == 0 {
-					sb.logger.Info("Adding validator", "address", possibleValidatorAddress)
-					// sb.propose(possibleValidatorAddress, true)
+				// sb.logger.Info("Possible validator to enter", "address", possibleValidatorAddress)
+				if !isAddressInUse(catchUp.Data.ValidatorSet, possibleValidatorAddress) {
+					sb.logger.Info("Substitution", "addressToExit", address, "addressToEnter", possibleValidatorAddress)
 					validatorSubstitutions[address] = possibleValidatorAddress
 					break
 				}
@@ -413,54 +405,8 @@ func (sb *backend) SendCatchUp(catchUp istanbul.CatchUpEvent) {
 	}
 
 	sb.logger.Info("Number of catchups", "address", address, "number", catchups[address])
-	// sb.logger.Warn("Candidates", "list", sb.candidates)
 
 	sb.txCachUp.Send(catchUp)
-}
-
-// Read validator addresses from local list
-// TODO try to get them with RPC and validator-nodes.json
-func (sb *backend) loadValidatorPool(filepath string) (map[common.Address]bool, []common.Address) {
-	// Open our jsonFile
-	jsonFile, err := os.Open(filepath)
-	defer jsonFile.Close()
-	// if we os.Open returns an error then handle it
-	if err != nil {
-		sb.logger.Error("Error opening file", "err", err)
-	}
-	byteValue, err := ioutil.ReadAll(jsonFile)
-	if err != nil {
-		sb.logger.Error("Error reading file", "err", err)
-	}
-	sb.logger.Info("List of validators in poll", "validators", string(byteValue))
-
-	var stringPool []string
-	var addressPool []common.Address
-
-	json.Unmarshal(byteValue, &stringPool)
-
-	var pool = make(map[common.Address]bool)
-
-	for _, addressStr := range stringPool {
-		address := common.HexToAddress(addressStr)
-		addressPool = append(addressPool, address)
-		pool[address] = false
-	}
-
-	return pool, addressPool
-}
-
-func (sb *backend) writeValidatorPool(filepath string, addressList []common.Address) {
-	addressString := "{"
-	for index, address := range addressList {
-		if index == 0 {
-			addressString += "\"" + address.String() + "\""
-		} else {
-			addressString += ",\"" + address.String() + "\""
-		}
-	}
-	addressString += "}"
-	ioutil.WriteFile(filepath, []byte(addressString), 0644)
 }
 
 func (sb *backend) propose(address common.Address, auth bool) {
@@ -469,9 +415,25 @@ func (sb *backend) propose(address common.Address, auth bool) {
 	sb.candidates[address] = auth
 }
 
-func contains(s []istanbul.Validator, e common.Address) bool {
+func deleteFromSubstitution(address common.Address) {
+	delete(validatorSubstitutions, address)
+}
+
+func isAddressInUse(validatorSet istanbul.ValidatorSet, address common.Address) bool {
+	if validatorSet.Contains(address) {
+		return true
+	}
+	for addressToExit, addressToEnter := range validatorSubstitutions {
+		if address == addressToEnter || address == addressToExit {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAddress(s []common.Address, address common.Address) bool {
 	for _, a := range s {
-		if bytes.Compare(a.Address().Bytes(), e.Bytes()) == 0 {
+		if a == address {
 			return true
 		}
 	}
@@ -479,8 +441,8 @@ func contains(s []istanbul.Validator, e common.Address) bool {
 }
 
 func find(slice []common.Address, address common.Address) int {
-	for i, v := range slice {
-		if bytes.Compare(v.Bytes(), address.Bytes()) == 0 {
+	for i, a := range slice {
+		if a == address {
 			return i
 		}
 	}

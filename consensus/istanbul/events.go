@@ -50,6 +50,7 @@ type DataCatchUp struct {
 	Validators    []string        `json: "validators"`
 	ValidatorSize int             `json: "validator_size"`
 	ValidatorSet  ValidatorSet    `json: "validator_set"`
+	Pool          Pool            `json: "pool"`
 }
 
 func (cu *CatchUpEvent) Str() (str string) {

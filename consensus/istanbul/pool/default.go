@@ -14,11 +14,9 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package validator
+package pool
 
 import (
-	"math"
-	"reflect"
 	"sort"
 	"sync"
 
@@ -42,17 +40,13 @@ func (val *defaultValidator) String() string {
 
 type defaultSet struct {
 	validators istanbul.Validators
-	policy     istanbul.ProposerPolicy
 
-	proposer    istanbul.Validator
 	validatorMu sync.RWMutex
-	selector    istanbul.ProposalSelector
 }
 
-func newDefaultSet(addrs []common.Address, policy istanbul.ProposerPolicy) *defaultSet {
+func newDefaultSet(addrs []common.Address) *defaultSet {
 	valSet := &defaultSet{}
 
-	valSet.policy = policy
 	// init validators
 	valSet.validators = make([]istanbul.Validator, len(addrs))
 	for i, addr := range addrs {
@@ -60,14 +54,6 @@ func newDefaultSet(addrs []common.Address, policy istanbul.ProposerPolicy) *defa
 	}
 	// sort validator
 	sort.Sort(valSet.validators)
-	// init proposer
-	if valSet.Size() > 0 {
-		valSet.proposer = valSet.GetByIndex(0)
-	}
-	valSet.selector = roundRobinProposer
-	if policy == istanbul.Sticky {
-		valSet.selector = stickyProposer
-	}
 
 	return valSet
 }
@@ -102,59 +88,8 @@ func (valSet *defaultSet) GetByAddress(addr common.Address) (int, istanbul.Valid
 	return -1, nil
 }
 
-func (valSet *defaultSet) GetProposer() istanbul.Validator {
-	return valSet.proposer
-}
-
-func (valSet *defaultSet) IsProposer(address common.Address) bool {
-	_, val := valSet.GetByAddress(address)
-	return reflect.DeepEqual(valSet.GetProposer(), val)
-}
-
-func (valSet *defaultSet) CalcProposer(lastProposer common.Address, round uint64) {
-	valSet.validatorMu.RLock()
-	defer valSet.validatorMu.RUnlock()
-	valSet.proposer = valSet.selector(valSet, lastProposer, round)
-}
-
-func calcSeed(valSet istanbul.ValidatorSet, proposer common.Address, round uint64) uint64 {
-	offset := 0
-	if idx, val := valSet.GetByAddress(proposer); val != nil {
-		offset = idx
-	}
-	return uint64(offset) + round
-}
-
 func emptyAddress(addr common.Address) bool {
 	return addr == common.Address{}
-}
-
-func roundRobinProposer(valSet istanbul.ValidatorSet, proposer common.Address, round uint64) istanbul.Validator {
-	if valSet.Size() == 0 {
-		return nil
-	}
-	seed := uint64(0)
-	if emptyAddress(proposer) {
-		seed = round
-	} else {
-		seed = calcSeed(valSet, proposer, round) + 1
-	}
-	pick := seed % uint64(valSet.Size())
-	return valSet.GetByIndex(pick)
-}
-
-func stickyProposer(valSet istanbul.ValidatorSet, proposer common.Address, round uint64) istanbul.Validator {
-	if valSet.Size() == 0 {
-		return nil
-	}
-	seed := uint64(0)
-	if emptyAddress(proposer) {
-		seed = round
-	} else {
-		seed = calcSeed(valSet, proposer, round)
-	}
-	pick := seed % uint64(valSet.Size())
-	return valSet.GetByIndex(pick)
 }
 
 func (valSet *defaultSet) AddValidator(address common.Address) bool {
@@ -185,7 +120,7 @@ func (valSet *defaultSet) RemoveValidator(address common.Address) bool {
 	return false
 }
 
-func (valSet *defaultSet) Copy() istanbul.ValidatorSet {
+func (valSet *defaultSet) Copy() istanbul.Pool {
 	valSet.validatorMu.RLock()
 	defer valSet.validatorMu.RUnlock()
 
@@ -193,21 +128,5 @@ func (valSet *defaultSet) Copy() istanbul.ValidatorSet {
 	for _, v := range valSet.validators {
 		addresses = append(addresses, v.Address())
 	}
-	return NewSet(addresses, valSet.policy)
-}
-
-func (valSet *defaultSet) F() int { return int(math.Ceil(float64(valSet.Size())/3)) - 1 }
-
-func (valSet *defaultSet) Policy() istanbul.ProposerPolicy { return valSet.policy }
-
-func (valSet *defaultSet) Contains(address common.Address) bool {
-	valSet.validatorMu.Lock()
-	defer valSet.validatorMu.Unlock()
-
-	for _, v := range valSet.validators {
-		if v.Address() == address {
-			return true
-		}
-	}
-	return false
+	return NewSet(addresses)
 }

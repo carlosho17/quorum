@@ -38,6 +38,7 @@ var (
 
 type IstanbulExtra struct {
 	Validators    []common.Address
+	Pool          []common.Address
 	Seal          []byte
 	CommittedSeal [][]byte
 }
@@ -46,6 +47,7 @@ type IstanbulExtra struct {
 func (ist *IstanbulExtra) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, []interface{}{
 		ist.Validators,
+		ist.Pool,
 		ist.Seal,
 		ist.CommittedSeal,
 	})
@@ -55,13 +57,14 @@ func (ist *IstanbulExtra) EncodeRLP(w io.Writer) error {
 func (ist *IstanbulExtra) DecodeRLP(s *rlp.Stream) error {
 	var istanbulExtra struct {
 		Validators    []common.Address
+		Pool          []common.Address
 		Seal          []byte
 		CommittedSeal [][]byte
 	}
 	if err := s.Decode(&istanbulExtra); err != nil {
 		return err
 	}
-	ist.Validators, ist.Seal, ist.CommittedSeal = istanbulExtra.Validators, istanbulExtra.Seal, istanbulExtra.CommittedSeal
+	ist.Validators, ist.Pool, ist.Seal, ist.CommittedSeal = istanbulExtra.Validators, istanbulExtra.Pool, istanbulExtra.Seal, istanbulExtra.CommittedSeal
 	return nil
 }
 
