@@ -265,7 +265,7 @@ func (c *core) startNewRound(round *big.Int) {
 	}
 	c.newRoundChangeTimer()
 
-	logger.Info("New round", "new_round", newView.Round, "new_seq", newView.Sequence, "new_proposer", c.valSet.GetProposer(), "valSet", c.valSet.List(), "size", c.valSet.Size(), "isProposer", c.isProposer())
+	logger.Info("New round", "new_round", newView.Round, "new_seq", newView.Sequence, "new_proposer", c.valSet.GetProposer(), "valSet", c.valSet.List(), "size", c.valSet.Size(), "isProposer", c.IsProposer())
 }
 
 func (c *core) sendCatchUp(lastProposal istanbul.Proposal, lastProposer common.Address) {
