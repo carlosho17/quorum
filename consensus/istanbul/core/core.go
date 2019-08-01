@@ -29,13 +29,15 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	metrics "github.com/ethereum/go-ethereum/metrics"
+	"github.com/ethereum/go-ethereum/params"
 	"gopkg.in/karalabe/cookiejar.v2/collections/prque"
 )
 
 // New creates an Istanbul consensus core
-func New(backend istanbul.Backend, config *istanbul.Config) Engine {
+func New(backend istanbul.Backend, config *istanbul.Config, chainConfig *params.ChainConfig) Engine {
 	r := metrics.NewRegistry()
 	c := &core{
+		chainConfig:        chainConfig,
 		config:             config,
 		address:            backend.Address(),
 		state:              StateAcceptRequest,
@@ -63,6 +65,7 @@ func New(backend istanbul.Backend, config *istanbul.Config) Engine {
 // ----------------------------------------------------------------------------
 
 type core struct {
+	chainConfig *params.ChainConfig
 	config  *istanbul.Config
 	address common.Address
 	state   State
@@ -159,6 +162,9 @@ func (c *core) currentView() *istanbul.View {
 }
 
 func (c *core) IsProposer() bool {
+	if c.chainConfig.IsAlastriaTest(c.current.Sequence()) {
+		c.logger.Trace("\n\n\n***** ALASTRIA HARD FORK *****", "block", c.current.Sequence())
+	}
 	v := c.valSet
 	if v == nil {
 		return false
