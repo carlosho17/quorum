@@ -52,11 +52,12 @@ type Tally struct {
 type Snapshot struct {
 	Epoch uint64 // The number of blocks after which to checkpoint and reset the pending votes
 
-	Number    uint64                   // Block number where the snapshot was created
-	Hash      common.Hash              // Block hash where the snapshot was created
-	Votes     []*Vote                  // List of votes cast in chronological order
-	Tally     map[common.Address]Tally // Current vote tally to avoid recalculating
-	ValSet    istanbul.ValidatorSet    // Set of authorized validators at this moment
+	Number uint64                   // Block number where the snapshot was created
+	Hash   common.Hash              // Block hash where the snapshot was created
+	Votes  []*Vote                  // List of votes cast in chronological order
+	Tally  map[common.Address]Tally // Current vote tally to avoid recalculating
+	ValSet istanbul.ValidatorSet    // Set of authorized validators at this moment
+	// @Izertis New fields to vote for pool
 	Pool      istanbul.Pool
 	PoolVotes []*Vote                  // List of votes for pool
 	PoolTally map[common.Address]Tally // Current pool vote tally
@@ -67,11 +68,12 @@ type Snapshot struct {
 // the genesis block.
 func newSnapshot(epoch uint64, number uint64, hash common.Hash, valSet istanbul.ValidatorSet, pool istanbul.Pool) *Snapshot {
 	snap := &Snapshot{
-		Epoch:     epoch,
-		Number:    number,
-		Hash:      hash,
-		ValSet:    valSet,
-		Tally:     make(map[common.Address]Tally),
+		Epoch:  epoch,
+		Number: number,
+		Hash:   hash,
+		ValSet: valSet,
+		Tally:  make(map[common.Address]Tally),
+		// @Izertis
 		Pool:      pool,
 		PoolTally: make(map[common.Address]Tally),
 	}
@@ -105,12 +107,13 @@ func (s *Snapshot) store(db ethdb.Database) error {
 // copy creates a deep copy of the snapshot, though not the individual votes.
 func (s *Snapshot) copy() *Snapshot {
 	cpy := &Snapshot{
-		Epoch:     s.Epoch,
-		Number:    s.Number,
-		Hash:      s.Hash,
-		ValSet:    s.ValSet.Copy(),
-		Votes:     make([]*Vote, len(s.Votes)),
-		Tally:     make(map[common.Address]Tally),
+		Epoch:  s.Epoch,
+		Number: s.Number,
+		Hash:   s.Hash,
+		ValSet: s.ValSet.Copy(),
+		Votes:  make([]*Vote, len(s.Votes)),
+		Tally:  make(map[common.Address]Tally),
+		// @Izertis Copy new fields
 		Pool:      s.Pool.Copy(),
 		PoolVotes: make([]*Vote, len(s.PoolVotes)),
 		PoolTally: make(map[common.Address]Tally),
@@ -121,6 +124,7 @@ func (s *Snapshot) copy() *Snapshot {
 	}
 	copy(cpy.Votes, s.Votes)
 
+	// @Izertis Copy slice
 	for address, tally := range s.PoolTally {
 		cpy.PoolTally[address] = tally
 	}
@@ -135,6 +139,7 @@ func (s *Snapshot) checkVote(address common.Address, authorize bool) bool {
 	return (validator != nil && !authorize) || (validator == nil && authorize)
 }
 
+// @Izertis
 // checkVotePool return whether it's a valid vote
 func (s *Snapshot) checkVotePool(address common.Address, authorize bool) bool {
 	_, validator := s.Pool.GetByAddress(address)
@@ -157,6 +162,7 @@ func (s *Snapshot) cast(address common.Address, authorize bool) bool {
 	return true
 }
 
+// @Izertis
 // cast adds a new vote into the pool tally.
 func (s *Snapshot) castPool(address common.Address, authorize bool) bool {
 	// Ensure the vote is meaningful
@@ -194,6 +200,7 @@ func (s *Snapshot) uncast(address common.Address, authorize bool) bool {
 	return true
 }
 
+// @Izertis
 // uncast removes a previously cast vote from the pool tally.
 func (s *Snapshot) uncastPool(address common.Address, authorize bool) bool {
 	// If there's no tally, it's a dangling vote, just drop
@@ -240,6 +247,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 		if number%s.Epoch == 0 {
 			snap.Votes = nil
 			snap.Tally = make(map[common.Address]Tally)
+			// @ Izertis Clean votes after epoch
 			snap.PoolVotes = nil
 			snap.PoolTally = make(map[common.Address]Tally)
 		}
@@ -264,6 +272,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 			}
 		}
 
+		// @Izertis
 		// Header authorized, discard any previous pool votes from the validator
 		for i, vote := range snap.PoolVotes {
 			if vote.Validator == validator && vote.Address == header.Coinbase {
@@ -299,6 +308,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 					Authorize: authorize,
 				})
 			}
+		// @Izertis Compare with new vote values
 		case bytes.Compare(header.Nonce[:], nonceAuthVotePool) == 0:
 			authorizePool = true
 			if snap.castPool(header.Coinbase, authorizePool) {
@@ -329,6 +339,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 				snap.ValSet.AddValidator(header.Coinbase)
 			} else {
 				snap.ValSet.RemoveValidator(header.Coinbase)
+				// @Izertis Reset substitution and catchups
 				deleteFromSubstitution(header.Coinbase)
 				catchups[header.Coinbase] = 0
 				// Discard any previous votes the deauthorized validator cast
@@ -353,6 +364,7 @@ func (s *Snapshot) apply(headers []*types.Header) (*Snapshot, error) {
 			}
 			delete(snap.Tally, header.Coinbase)
 		}
+		// @Izertis
 		// If the vote passed, update the pool of validators
 		if tally := snap.PoolTally[header.Coinbase]; tally.Votes > snap.ValSet.Size()/2 {
 			if tally.Authorize {
@@ -404,6 +416,7 @@ func (s *Snapshot) validators() []common.Address {
 	return validators
 }
 
+// @Izertis
 // pool retrieves the list of validators in ascending order.
 func (s *Snapshot) pool() []common.Address {
 	validators := make([]common.Address, 0, s.Pool.Size())
@@ -431,6 +444,7 @@ type snapshotJSON struct {
 	Validators []common.Address        `json:"validators"`
 	Policy     istanbul.ProposerPolicy `json:"policy"`
 
+	// @Izertis
 	// for pool
 	Pool      []common.Address         `json:"pool"`
 	PoolVotes []*Vote                  `json:"poolVotes"`
@@ -446,9 +460,10 @@ func (s *Snapshot) toJSONStruct() *snapshotJSON {
 		Tally:      s.Tally,
 		Validators: s.validators(),
 		Policy:     s.ValSet.Policy(),
-		Pool:       s.pool(),
-		PoolVotes:  s.PoolVotes,
-		PoolTally:  s.PoolTally,
+		// @Izertis
+		Pool:      s.pool(),
+		PoolVotes: s.PoolVotes,
+		PoolTally: s.PoolTally,
 	}
 }
 
@@ -465,6 +480,7 @@ func (s *Snapshot) UnmarshalJSON(b []byte) error {
 	s.Votes = j.Votes
 	s.Tally = j.Tally
 	s.ValSet = validator.NewSet(j.Validators, j.Policy)
+	// @Izertis
 	s.Pool = pool.NewSet(j.Pool)
 	s.PoolVotes = j.PoolVotes
 	s.PoolTally = j.PoolTally

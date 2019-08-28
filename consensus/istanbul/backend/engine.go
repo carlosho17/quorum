@@ -93,6 +93,7 @@ var (
 	nonceAuthVote = hexutil.MustDecode("0xffffffffffffffff") // Magic nonce number to vote on adding a new validator
 	nonceDropVote = hexutil.MustDecode("0x0000000000000000") // Magic nonce number to vote on removing a validator.
 
+	// @Izertis Pool vote values
 	nonceAuthVotePool = hexutil.MustDecode("0xffffffff00000000") // Magic nonce number to vote on adding a new validator
 	nonceDropVotePool = hexutil.MustDecode("0x00000000ffffffff") // Magic nonce number to vote on removing a validator.
 
@@ -352,6 +353,7 @@ func (sb *backend) Prepare(chain consensus.ChainReader, header *types.Header) er
 	}
 	sb.candidatesLock.RUnlock()
 
+	// @Izertis
 	// get valid pool candidate list
 	sb.candidatesPoolLock.RLock()
 	var addressesPool []common.Address
@@ -364,6 +366,7 @@ func (sb *backend) Prepare(chain consensus.ChainReader, header *types.Header) er
 	}
 	sb.candidatesPoolLock.RUnlock()
 
+	// @Izertis
 	if len(addresses) > 0 && len(addressesPool) > 0 {
 		i := rand.Intn(2)
 		if i == 0 {
@@ -407,6 +410,7 @@ func (sb *backend) Prepare(chain consensus.ChainReader, header *types.Header) er
 		}
 	}
 
+	// @Izertis Added pool to prepareExtra
 	// add validators in snapshot to extraData's validators section
 	extra, err := prepareExtra(header, snap.validators(), snap.pool())
 	if err != nil {
@@ -597,6 +601,7 @@ func (sb *backend) snapshot(chain consensus.ChainReader, number uint64, hash com
 			if err != nil {
 				return nil, err
 			}
+			// @Izertis Add pool to Snapshot
 			snap = newSnapshot(sb.config.Epoch, 0, genesis.Hash(), validator.NewSet(istanbulExtra.Validators, sb.config.ProposerPolicy), pool.NewSet(istanbulExtra.Pool))
 			if err := snap.store(sb.db); err != nil {
 				return nil, err
@@ -681,6 +686,7 @@ func ecrecover(header *types.Header) (common.Address, error) {
 	return addr, nil
 }
 
+// @Izertis Add pool
 // prepareExtra returns a extra-data of the given header and validators
 func prepareExtra(header *types.Header, vals []common.Address, pool []common.Address) ([]byte, error) {
 	var buf bytes.Buffer
@@ -692,7 +698,8 @@ func prepareExtra(header *types.Header, vals []common.Address, pool []common.Add
 	buf.Write(header.Extra[:types.IstanbulExtraVanity])
 
 	ist := &types.IstanbulExtra{
-		Validators:    vals,
+		Validators: vals,
+		// @Izertis Added pool
 		Pool:          pool,
 		Seal:          []byte{},
 		CommittedSeal: [][]byte{},

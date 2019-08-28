@@ -42,8 +42,10 @@ const (
 	fetcherID = "istanbul"
 )
 
+// @Izertis empty addres
 var emptyAddress = common.HexToAddress("0x0000000000000000000000000000000000000000")
 
+// @Izertis Catchups and substitutions
 var catchups map[common.Address]uint8
 var validatorSubstitutions map[common.Address]common.Address
 
@@ -63,13 +65,15 @@ func New(config *istanbul.Config, privateKey *ecdsa.PrivateKey, db ethdb.Databas
 		commitCh:         make(chan *types.Block, 1),
 		recents:          recents,
 		candidates:       make(map[common.Address]bool),
-		candidatesPool:   make(map[common.Address]bool),
-		coreStarted:      false,
-		recentMessages:   recentMessages,
-		knownMessages:    knownMessages,
+		// @Izertis pool candidates
+		candidatesPool: make(map[common.Address]bool),
+		coreStarted:    false,
+		recentMessages: recentMessages,
+		knownMessages:  knownMessages,
 	}
 	backend.core = istanbulCore.New(backend, backend.config)
 
+	// @Izertis Initialize
 	catchups = make(map[common.Address]uint8)
 	validatorSubstitutions = make(map[common.Address]common.Address)
 
@@ -101,9 +105,9 @@ type backend struct {
 	candidates map[common.Address]bool
 	// Protects the signer fields
 	candidatesLock sync.RWMutex
-	// Current list of candidates for pool
+	// @Izertis Current list of candidates for pool
 	candidatesPool map[common.Address]bool
-	// Protects the signer fields
+	// @Izertis Protects the signer fields
 	candidatesPoolLock sync.RWMutex
 
 	// Snapshots for recent block to speed up reorgs
@@ -133,6 +137,7 @@ func (sb *backend) Validators(proposal istanbul.Proposal) istanbul.ValidatorSet 
 	return sb.getValidators(proposal.Number().Uint64(), proposal.Hash())
 }
 
+// @Izertis
 // Validators implements istanbul.Backend.Validators
 func (sb *backend) Pool(proposal istanbul.Proposal) istanbul.Pool {
 	return sb.getPool(proposal.Number().Uint64(), proposal.Hash())
@@ -315,6 +320,7 @@ func (sb *backend) getValidators(number uint64, hash common.Hash) istanbul.Valid
 	return snap.ValSet
 }
 
+// @Izertis
 func (sb *backend) getPool(number uint64, hash common.Hash) istanbul.Pool {
 	snap, err := sb.snapshot(sb.chain, number, hash, nil)
 	if err != nil {
@@ -351,6 +357,7 @@ func (sb *backend) SubscribeCatchUpEvent(ch chan<- istanbul.CatchUpEvent) event.
 	return sb.txCachUp.Subscribe(ch)
 }
 
+// @Izertis Method where the rotation takes place
 func (sb *backend) SendCatchUp(catchUp istanbul.CatchUpEvent) {
 	// sb.logger.Warn("Address", "address", catchUp.Data.Address)
 	// sb.logger.Warn("Old Proposer", "oldProposer", catchUp.Data.OldProposer)
@@ -409,16 +416,19 @@ func (sb *backend) SendCatchUp(catchUp istanbul.CatchUpEvent) {
 	sb.txCachUp.Send(catchUp)
 }
 
+// @Izertis
 func (sb *backend) propose(address common.Address, auth bool) {
 	sb.candidatesLock.Lock()
 	defer sb.candidatesLock.Unlock()
 	sb.candidates[address] = auth
 }
 
+// @Izertis
 func deleteFromSubstitution(address common.Address) {
 	delete(validatorSubstitutions, address)
 }
 
+// @Izertis
 func isAddressInUse(validatorSet istanbul.ValidatorSet, address common.Address) bool {
 	if validatorSet.Contains(address) {
 		return true
@@ -431,6 +441,7 @@ func isAddressInUse(validatorSet istanbul.ValidatorSet, address common.Address) 
 	return false
 }
 
+// @Izertis
 func containsAddress(s []common.Address, address common.Address) bool {
 	for _, a := range s {
 		if a == address {
@@ -440,6 +451,7 @@ func containsAddress(s []common.Address, address common.Address) bool {
 	return false
 }
 
+// @Izertis
 func find(slice []common.Address, address common.Address) int {
 	for i, a := range slice {
 		if a == address {

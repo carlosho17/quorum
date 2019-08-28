@@ -37,7 +37,8 @@ var (
 )
 
 type IstanbulExtra struct {
-	Validators    []common.Address
+	Validators []common.Address
+	// @Izertis
 	Pool          []common.Address
 	Seal          []byte
 	CommittedSeal [][]byte
@@ -47,6 +48,7 @@ type IstanbulExtra struct {
 func (ist *IstanbulExtra) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, []interface{}{
 		ist.Validators,
+		// @Izertis
 		ist.Pool,
 		ist.Seal,
 		ist.CommittedSeal,
@@ -56,7 +58,8 @@ func (ist *IstanbulExtra) EncodeRLP(w io.Writer) error {
 // DecodeRLP implements rlp.Decoder, and load the istanbul fields from a RLP stream.
 func (ist *IstanbulExtra) DecodeRLP(s *rlp.Stream) error {
 	var istanbulExtra struct {
-		Validators    []common.Address
+		Validators []common.Address
+		// @Izertis
 		Pool          []common.Address
 		Seal          []byte
 		CommittedSeal [][]byte

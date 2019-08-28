@@ -674,6 +674,7 @@ web3._extend({
 })
 `
 
+// @Izertis Extend web3 API
 const Istanbul_JS = `
 web3._extend({
 	property: 'istanbul',

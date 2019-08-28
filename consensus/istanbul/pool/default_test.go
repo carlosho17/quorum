@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
+// @Izertis New pool created
+
 package pool
 
 import (
@@ -35,7 +37,6 @@ func TestValidatorSet(t *testing.T) {
 	testNewValidatorSet(t)
 	testNormalValSet(t)
 	testEmptyValSet(t)
-	testStickyProposer(t)
 	testAddAndRemoveValidator(t)
 }
 
@@ -54,7 +55,7 @@ func testNewValidatorSet(t *testing.T) {
 	}
 
 	// Create ValidatorSet
-	valSet := NewSet(ExtractValidators(b), istanbul.RoundRobin)
+	valSet := NewSet(ExtractValidators(b))
 	if valSet == nil {
 		t.Errorf("the validator byte array cannot be parsed")
 		t.FailNow()
@@ -78,7 +79,7 @@ func testNormalValSet(t *testing.T) {
 	val1 := New(addr1)
 	val2 := New(addr2)
 
-	valSet := newDefaultSet([]common.Address{addr1, addr2}, istanbul.RoundRobin)
+	valSet := newDefaultSet([]common.Address{addr1, addr2})
 	if valSet == nil {
 		t.Errorf("the format of validator set is invalid")
 		t.FailNow()
@@ -105,37 +106,17 @@ func testNormalValSet(t *testing.T) {
 	if _, val := valSet.GetByAddress(invalidAddr); val != nil {
 		t.Errorf("validator mismatch: have %v, want nil", val)
 	}
-	// test get proposer
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val1) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val1)
-	}
-	// test calculate proposer
-	lastProposer := addr1
-	valSet.CalcProposer(lastProposer, uint64(0))
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val2) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val2)
-	}
-	valSet.CalcProposer(lastProposer, uint64(3))
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val1) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val1)
-	}
-	// test empty last proposer
-	lastProposer = common.Address{}
-	valSet.CalcProposer(lastProposer, uint64(3))
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val2) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val2)
-	}
 }
 
 func testEmptyValSet(t *testing.T) {
-	valSet := NewSet(ExtractValidators([]byte{}), istanbul.RoundRobin)
+	valSet := NewSet(ExtractValidators([]byte{}))
 	if valSet == nil {
 		t.Errorf("validator set should not be nil")
 	}
 }
 
 func testAddAndRemoveValidator(t *testing.T) {
-	valSet := NewSet(ExtractValidators([]byte{}), istanbul.RoundRobin)
+	valSet := NewSet(ExtractValidators([]byte{}))
 	if !valSet.AddValidator(common.StringToAddress(string(2))) {
 		t.Error("the validator should be added")
 	}
@@ -171,38 +152,5 @@ func testAddAndRemoveValidator(t *testing.T) {
 	valSet.RemoveValidator(common.StringToAddress(string(0)))
 	if len(valSet.List()) != 0 {
 		t.Error("the size of validator set should be 0")
-	}
-}
-
-func testStickyProposer(t *testing.T) {
-	b1 := common.Hex2Bytes(testAddress)
-	b2 := common.Hex2Bytes(testAddress2)
-	addr1 := common.BytesToAddress(b1)
-	addr2 := common.BytesToAddress(b2)
-	val1 := New(addr1)
-	val2 := New(addr2)
-
-	valSet := newDefaultSet([]common.Address{addr1, addr2}, istanbul.Sticky)
-
-	// test get proposer
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val1) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val1)
-	}
-	// test calculate proposer
-	lastProposer := addr1
-	valSet.CalcProposer(lastProposer, uint64(0))
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val1) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val1)
-	}
-
-	valSet.CalcProposer(lastProposer, uint64(1))
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val2) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val2)
-	}
-	// test empty last proposer
-	lastProposer = common.Address{}
-	valSet.CalcProposer(lastProposer, uint64(3))
-	if val := valSet.GetProposer(); !reflect.DeepEqual(val, val2) {
-		t.Errorf("proposer mismatch: have %v, want %v", val, val2)
 	}
 }

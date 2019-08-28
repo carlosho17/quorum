@@ -76,6 +76,7 @@ func (api *API) GetValidators(number *rpc.BlockNumber) ([]common.Address, error)
 	return snap.validators(), nil
 }
 
+// @Izertis
 // GetPool retrieves the list of validators in the pool at the specified block.
 func (api *API) GetPool(number *rpc.BlockNumber) ([]common.Address, error) {
 	// Retrieve the requested block number (or current if none requested)
@@ -121,6 +122,7 @@ func (api *API) Candidates() map[common.Address]bool {
 	return proposals
 }
 
+// @Izertis
 // CandidatesPool returns the current pool candidates the node tries to uphold and vote on.
 func (api *API) CandidatesPool() map[common.Address]bool {
 	api.istanbul.candidatesPoolLock.RLock()
@@ -153,6 +155,7 @@ func (api *API) Propose(address common.Address, auth bool) error {
 	return nil
 }
 
+// @Izertis
 // ProposePool injects a new authorization candidate that the validator will attempt to
 // push through.
 func (api *API) ProposePool(address common.Address, auth bool) error {
@@ -182,6 +185,7 @@ func (api *API) Discard(address common.Address) {
 	delete(api.istanbul.candidates, address)
 }
 
+// @ Izertis
 // DiscardPool drops a currently running candidate, stopping the validator from casting
 // further votes (either for or against).
 func (api *API) DiscardPool(address common.Address) {
